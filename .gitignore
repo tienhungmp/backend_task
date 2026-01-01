@@ -1,0 +1,106 @@
+####################################
+# OS / Editor
+####################################
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+####################################
+# Node.js
+####################################
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+.env
+.env.*
+!.env.example
+
+dist/
+build/
+coverage/
+
+####################################
+# Python
+####################################
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+.venv/
+venv/
+env/
+ENV/
+
+pip-wheel-metadata/
+*.egg-info/
+.eggs/
+
+####################################
+# Python ML / AI
+####################################
+# Model files (nặng, không commit)
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.h5
+*.pb
+*.joblib
+*.pkl
+
+# HuggingFace / Transformers
+.cache/
+.huggingface/
+transformers_cache/
+
+# Training outputs
+runs/
+logs/
+wandb/
+mlruns/
+tensorboard/
+
+####################################
+# Jupyter / Colab
+####################################
+.ipynb_checkpoints/
+*.ipynb
+
+####################################
+# Data
+####################################
+data/
+datasets/
+*.csv
+*.tsv
+*.jsonl
+
+####################################
+# Temporary
+####################################
+tmp/
+temp/
+*.tmp
+*.log
+
+####################################
+# Docker
+####################################
+docker-compose.override.yml
+
+####################################
+# Misc
+####################################
+*.lock
+
+
+task_extraction_model.zip
+task_model.zip
