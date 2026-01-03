@@ -75,14 +75,29 @@ exports.analyzeNote = async (req, res) => {
 // @desc    Create tasks from AI suggestions with auto project/category creation
 // @route   POST /api/ai/create-tasks
 // @access  Private
+// @desc    Create tasks from AI suggestions with project information
+// @route   POST /api/ai/create-tasks
+// @access  Private
 exports.createTasksFromAI = async (req, res) => {
   try {
-    const { tasks, noteId, autoCreateProjectsAndTopics = true } = req.body;
+    const { 
+      tasks, 
+      noteId,
+      projectInfo, // NEW: Thông tin project bắt buộc
+      autoCreateCategories = true
+    } = req.body;
 
     if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
       return res.status(400).json({
         success: false,
         message: 'Danh sách tasks không hợp lệ'
+      });
+    }
+
+    if (!projectInfo || !projectInfo.name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Thông tin project không hợp lệ (cần có name)'
       });
     }
 
@@ -93,45 +108,38 @@ exports.createTasksFromAI = async (req, res) => {
     ]);
 
     const createdTasks = [];
-    const createdProjects = new Map();
     const createdCategories = new Map();
+    let project = null;
+    let isNewProject = false;
 
+    // Tìm hoặc tạo project
+    const projectName = projectInfo.name;
+    project = userProjects.find(p => 
+      p.name.toLowerCase() === projectName.toLowerCase()
+    );
+
+    if (!project) {
+      // Tạo project mới với thông tin được cung cấp
+      project = await Project.create({
+        user: req.user.id,
+        name: projectInfo.name,
+        description: projectInfo.description || `Tự động tạo từ AI - ${new Date().toLocaleDateString('vi-VN')}`,
+        color: projectInfo.color || _generateRandomColor(),
+        icon: projectInfo.icon || 'folder',
+        startDate: projectInfo.startDate || null,
+        endDate: projectInfo.endDate || null,
+        status: projectInfo.status || 'active',
+        aiGenerated: true
+      });
+      isNewProject = true;
+    }
+
+    // Tạo tasks - tất cả đều thuộc project này
     for (const taskData of tasks) {
-      let projectId = null;
       let categoryId = null;
 
-      // Handle suggested_project
-      if (taskData.suggested_project) {
-        const projectName = taskData.suggested_project;
-        
-        // Check if project exists (case-insensitive)
-        let project = userProjects.find(p => 
-          p.name.toLowerCase() === projectName.toLowerCase()
-        );
-
-        // Auto-create project if not exists and autoCreate is enabled
-        if (!project && autoCreateProjectsAndTopics) {
-          // Check if we already created it in this batch
-          if (createdProjects.has(projectName.toLowerCase())) {
-            project = createdProjects.get(projectName.toLowerCase());
-          } else {
-            project = await Project.create({
-              user: req.user.id,
-              name: projectName,
-              description: `Tự động tạo từ AI - ${new Date().toLocaleDateString('vi-VN')}`,
-              color: _generateRandomColor(),
-              aiGenerated: true
-            });
-            createdProjects.set(projectName.toLowerCase(), project);
-            userProjects.push(project); // Add to cache for next iterations
-          }
-        }
-
-        projectId = project ? project._id : null;
-      }
-
       // Handle suggested_topic (map to Category)
-      if (taskData.suggested_topic) {
+      if (taskData.suggested_topic && autoCreateCategories) {
         const topicName = taskData.suggested_topic;
         
         // Check if category exists (case-insensitive)
@@ -139,8 +147,8 @@ exports.createTasksFromAI = async (req, res) => {
           c.name.toLowerCase() === topicName.toLowerCase()
         );
 
-        // Auto-create category if not exists and autoCreate is enabled
-        if (!category && autoCreateProjectsAndTopics) {
+        // Auto-create category if not exists
+        if (!category) {
           // Check if we already created it in this batch
           if (createdCategories.has(topicName.toLowerCase())) {
             category = createdCategories.get(topicName.toLowerCase());
@@ -154,24 +162,23 @@ exports.createTasksFromAI = async (req, res) => {
               aiGenerated: true
             });
             createdCategories.set(topicName.toLowerCase(), category);
-            userCategories.push(category); // Add to cache for next iterations
+            userCategories.push(category);
           }
         }
 
         categoryId = category ? category._id : null;
       }
 
-      // Create task
+      // Create task - gắn vào project
       const task = await Task.create({
         user: req.user.id,
         title: taskData.task_text,
         priority: _mapPriorityToVietnamese(taskData.priority),
-        estimatedTime: taskData.estimated_time_minutes,
-        project: projectId,
+        estimatedMinutes: taskData.estimated_time_minutes,
+        project: project._id, // Tất cả tasks đều thuộc project này
         category: categoryId,
         aiGenerated: true,
         aiMetadata: {
-          suggestedProject: taskData.suggested_project,
           suggestedTopic: taskData.suggested_topic,
           originalPriority: taskData.priority
         },
@@ -185,17 +192,22 @@ exports.createTasksFromAI = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: `Đã tạo ${createdTasks.length} tasks từ AI`,
+      message: `Đã tạo ${createdTasks.length} tasks trong project "${project.name}"`,
       data: {
+        project: {
+          id: project._id,
+          name: project.name,
+          description: project.description,
+          startDate: project.startDate,
+          endDate: project.endDate,
+          status: project.status,
+          isNew: isNewProject
+        },
         tasks: createdTasks,
         summary: {
           tasksCreated: createdTasks.length,
-          projectsCreated: createdProjects.size,
+          projectCreated: isNewProject,
           categoriesCreated: createdCategories.size,
-          newProjects: Array.from(createdProjects.values()).map(p => ({
-            id: p._id,
-            name: p.name
-          })),
           newCategories: Array.from(createdCategories.values()).map(c => ({
             id: c._id,
             name: c.name
@@ -211,6 +223,63 @@ exports.createTasksFromAI = async (req, res) => {
     });
   }
 };
+
+// Helper function to generate random color
+function _generateRandomColor() {
+  const colors = [
+    '#3B82F6', '#10B981', '#F59E0B', '#EF4444', 
+    '#8B5CF6', '#EC4899', '#14B8A6', '#F97316',
+    '#6366F1', '#06B6D4', '#84CC16', '#A855F7'
+  ];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
+// Helper function to suggest icon for topic
+function _suggestIconForTopic(topicName) {
+  const lowerName = topicName.toLowerCase();
+  
+  const iconMap = {
+    'lập trình': 'code',
+    'phát triển': 'code',
+    'coding': 'code',
+    'thiết kế': 'palette',
+    'design': 'palette',
+    'quản lý': 'users',
+    'management': 'users',
+    'họp': 'users',
+    'meeting': 'users',
+    'báo cáo': 'file-text',
+    'report': 'file-text',
+    'email': 'mail',
+    'marketing': 'trending-up',
+    'nghiên cứu': 'search',
+    'research': 'search',
+    'học tập': 'book',
+    'learning': 'book',
+    'giao tiếp': 'message-circle',
+    'communication': 'message-circle',
+    'tài chính': 'dollar-sign',
+    'finance': 'dollar-sign'
+  };
+
+  for (const [keyword, icon] of Object.entries(iconMap)) {
+    if (lowerName.includes(keyword)) {
+      return icon;
+    }
+  }
+
+  return 'tag';
+}
+
+// Helper function to map priority
+function _mapPriorityToVietnamese(priority) {
+  const priorityMap = {
+    'Low': 'Thấp',
+    'Medium': 'Trung bình',
+    'High': 'Cao'
+  };
+  return priorityMap[priority] || 'Trung bình';
+}
 
 // @desc    Get AI suggested project/topic mapping for a single task
 // @route   POST /api/ai/suggest-mapping
